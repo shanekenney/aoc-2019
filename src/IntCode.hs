@@ -1,335 +1,208 @@
 module IntCode (execute, programVector, IntCodeMemory(..), initMemory) where
 
 import Data.Vector as V (fromList, slice, (!), (//), Vector, head, toList)
+import Data.Tuple.Select (sel1, sel2, sel3)
 import Data.List.Split (splitOn)
 import Helpers
+import Text.Printf
+import Debug.Trace (traceShow)
 
 data IntCodeMemory = IntCodeMemory
-  { opCode :: Int
-  , instructionPointer :: Int
+  { instructionPointer :: Int
+  , relativeBase :: Int
   , vector :: Vector Int
   , inputs :: [Int]
   , outputs :: [Int]
   } deriving (Show)
 
+data OpCode
+  = Add 
+  | Multiply   
+  | LessThan   
+  | Equals   
+  | Halt
+  | Input 
+  | Output 
+  | JumpTrue  
+  | JumpFalse
+  deriving (Show)
 
-vectorOperation :: (Int -> Int -> Int) -> Int -> Int -> Int -> Vector Int -> Vector Int
-vectorOperation op inPosA inPosB outPos vector = vector // [(outPos, value)]
+data ParameterMode
+  = Position
+  | Immediate
+  | Relative
+  deriving (Show)
+
+data ParameterPosition
+  = First
+  | Second
+  | Third
+  deriving (Show)
+
+data ParameterType
+  = Value
+  | Address
+
+data Operation = Operation
+  { code :: OpCode
+  , paramMode :: (ParameterMode, ParameterMode, ParameterMode)
+  } deriving (Show)
+
+toOpCode :: Int -> OpCode
+toOpCode 1 = Add
+toOpCode 2 = Multiply
+toOpCode 3 = Input
+toOpCode 4 = Output
+toOpCode 5 = JumpTrue
+toOpCode 6 = JumpFalse
+toOpCode 7 = LessThan
+toOpCode 8 = Equals
+toOpCode 99 = Halt
+
+toParameterMode :: Int -> ParameterMode
+toParameterMode 0 = Position
+toParameterMode 1 = Immediate
+toParameterMode 2 = Relative
+
+parseOperation :: Int -> Operation
+parseOperation code = Operation 
+  { code = toOpCode $ intCode
+  , paramMode = (param1, param2, param3)
+  }
   where
-    operandA = vector ! inPosA
-    operandB = vector ! inPosB
-    value = op operandA operandB
+    opCodeStr = printf "%05d" code
+    intCode = parseInt $ drop 3 $ opCodeStr
+    parseParameterMode = toParameterMode . parseInt . (:[]) . (!!) opCodeStr
+    param1 = parseParameterMode 2
+    param2 = parseParameterMode 1
+    param3 = parseParameterMode 0
 
-add = vectorOperation (+)
-multiply = vectorOperation (*)
-less x y = if x < y then 1 else 0
-equals x y = if x == y then 1 else 0
+readParam :: IntCodeMemory -> (ParameterMode, ParameterMode, ParameterMode) -> ParameterType -> ParameterPosition -> Int
+readParam memory modes paramType position = 
+  case mode of
+    Position -> case paramType of 
+                  Address -> paramValue
+                  Value -> vect ! paramValue
+    Immediate -> paramValue
+    Relative -> case paramType of 
+                  Address -> paramValue
+                  Value -> vect ! ((relativeBase memory) + paramValue)
+  where
+    vect = vector memory
+    paramValue = vect ! ((instructionPointer memory) + offset)
+    (mode, offset) = case position of
+                       First -> (sel1 modes, 1)
+                       Second -> (sel2 modes, 2)
+                       Third -> (sel3 modes, 3)
 
-vecLess = vectorOperation less
-vecEqual = vectorOperation equals
+perform :: Operation -> IntCodeMemory -> IntCodeMemory
+perform (Operation Add paramMode) memory = memory 
+  { vector = (vector memory) // [(writeAddress, value)]
+  , instructionPointer = (instructionPointer memory) + 4
+  }
+  where
+    readParam' = readParam memory paramMode
+    x = readParam' Value First
+    y = readParam' Value Second
+    writeAddress = readParam' Address Third
+    value = x + y
+
+perform (Operation Multiply paramMode) memory = memory 
+  { vector = (vector memory) // [(writeAddress, value)]
+  , instructionPointer = (instructionPointer memory) + 4
+  }
+  where
+    readParam' = readParam memory paramMode
+    x = readParam' Value First
+    y = readParam' Value Second
+    writeAddress = readParam' Address Third
+    value = x * y
+
+perform (Operation LessThan paramMode) memory = memory 
+  { vector = (vector memory) // [(writeAddress, value)]
+  , instructionPointer = (instructionPointer memory) + 4
+  }
+  where
+    readParam' = readParam memory paramMode
+    x = readParam' Value First
+    y = readParam' Value Second
+    writeAddress = readParam' Address Third
+    value = if x < y then 1 else 0
+
+perform (Operation Equals paramMode) memory = memory 
+  { vector = (vector memory) // [(writeAddress, value)]
+  , instructionPointer = (instructionPointer memory) + 4
+  }
+  where
+    readParam' = readParam memory paramMode
+    x = readParam' Value First
+    y = readParam' Value Second
+    writeAddress = readParam' Address Third
+    value = if x == y then 1 else 0
+
+perform (Operation Input paramMode) memory = memory 
+  { vector = (vector memory) // [(writeAddress, x)]
+  , instructionPointer = (instructionPointer memory) + 2
+  , inputs = xs
+  }
+  where
+    readParam' = readParam memory paramMode
+    writeAddress = readParam' Address First
+    (x:xs) = inputs memory
+
+perform (Operation Output paramMode) memory = memory 
+  { instructionPointer = (instructionPointer memory) + 2
+  , outputs = x:(outputs memory)
+  }
+  where
+    readParam' = readParam memory paramMode
+    x = readParam' Value First
+
+perform (Operation JumpTrue paramMode) memory = memory 
+  { instructionPointer = nextPointer }
+  where
+    readParam' = readParam memory paramMode
+    x = readParam' Value First
+    jumpAddress = readParam' Value Second
+    nextPointer = if x /= 0 then jumpAddress else (instructionPointer memory) + 3
+
+perform (Operation JumpFalse paramMode) memory = memory 
+  { instructionPointer = nextPointer }
+  where
+    readParam' = readParam memory paramMode
+    x = readParam' Value First
+    jumpAddress = readParam' Value Second
+    nextPointer = if x == 0 then jumpAddress else (instructionPointer memory) + 3
+
+perform (Operation Halt _) memory = memory
+  { instructionPointer = -1
+  , inputs = []
+  , outputs = inputs memory 
+  }
 
 processInstruction :: IntCodeMemory -> IntCodeMemory
-processInstruction (IntCodeMemory 1 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
+processInstruction memory = if continue then processInstruction newMemory else newMemory 
   where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextVector = add inPosA inPosB outPos vector
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-
-processInstruction (IntCodeMemory 101 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    operandA = inPosA
-    operandB = vector ! inPosB
-    value = operandA + operandB
-    nextVector = vector // [(outPos, value)]
-
-processInstruction (IntCodeMemory 1001 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    operandA = vector ! inPosA
-    operandB = inPosB
-    value = operandA + operandB
-    nextVector = vector // [(outPos, value)]
-
-processInstruction (IntCodeMemory 1101 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    operandA = inPosA
-    operandB = inPosB
-    value = operandA + operandB
-    nextVector = vector // [(outPos, value)]
-
-processInstruction (IntCodeMemory 2 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    nextVector = multiply inPosA inPosB outPos vector
-
-processInstruction (IntCodeMemory 102 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    operandA = inPosA
-    operandB = vector ! inPosB
-    value = operandA * operandB
-    nextVector = vector // [(outPos, value)]
-
-processInstruction (IntCodeMemory 1002 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    operandA = vector ! inPosA
-    operandB = inPosB
-    value = operandA * operandB
-    nextVector = vector // [(outPos, value)]
-
-processInstruction (IntCodeMemory 1102 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    operandA = inPosA
-    operandB = inPosB
-    value = operandA * operandB
-    nextVector = vector // [(outPos, value)]
-
-processInstruction (IntCodeMemory 7 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    nextVector = vecLess inPosA inPosB outPos vector
-
-processInstruction (IntCodeMemory 107 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    operandA = inPosA
-    operandB = vector ! inPosB
-    value = operandA `less` operandB
-    nextVector = vector // [(outPos, value)]
-
-processInstruction (IntCodeMemory 1007 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    operandA = vector ! inPosA
-    operandB = inPosB
-    value = operandA `less` operandB
-    nextVector = vector // [(outPos, value)]
-
-processInstruction (IntCodeMemory 1107 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    operandA = inPosA
-    operandB = inPosB
-    value = operandA `less` operandB
-    nextVector = vector // [(outPos, value)]
-
-processInstruction (IntCodeMemory 8 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    nextVector = vecEqual inPosA inPosB outPos vector
-
-processInstruction (IntCodeMemory 108 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    operandA = inPosA
-    operandB = vector ! inPosB
-    value = operandA `equals` operandB
-    nextVector = vector // [(outPos, value)]
-
-processInstruction (IntCodeMemory 1008 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    operandA = vector ! inPosA
-    operandB = inPosB
-    value = operandA `equals` operandB
-    nextVector = vector // [(outPos, value)]
-
-processInstruction (IntCodeMemory 1108 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inPosA = vector ! (instructionPointer + 1)
-    inPosB = vector ! (instructionPointer + 2)
-    outPos = vector ! (instructionPointer + 3)
-    nextPointer = instructionPointer + 4
-    nextOpCode = vector ! nextPointer
-    operandA = inPosA
-    operandB = inPosB
-    value = operandA `equals` operandB
-    nextVector = vector // [(outPos, value)]
-
-processInstruction (IntCodeMemory 99 instructionPointer vector inputs outputs) = (IntCodeMemory 99 0 vector [] inputs)
-
-processInstruction (IntCodeMemory 3 instructionPointer vector (input:inputs) outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    outPos = vector ! (instructionPointer + 1)
-    nextPointer = instructionPointer + 2
-    nextOpCode = vector ! nextPointer
-    nextVector = vector // [(outPos, input)]
-
---processInstruction (IntCodeMemory 4 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs newoutputs)
-  --where
-    --outValue = vector ! (vector ! (instructionPointer + 1))
-    --newoutputs) = outValue:outputs
-    --nextPointer = instructionPointer + 2
-    --nextOpCode = vector ! nextPointer
-    --nextVector = vector
-
---processInstruction (IntCodeMemory 104 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs newOutputs)
-  --where
-    --outValue = vector ! (instructionPointer + 1)
-    --newoutputs) = outValue:outputs
-    --nextPointer = instructionPointer + 2
-    --nextOpCode = vector ! nextPointer
-    --nextVector = vector
-
-processInstruction (IntCodeMemory 4 instructionPointer vector inputs outputs) = (IntCodeMemory nextOpCode nextPointer nextVector inputs newOutputs)
-  where
-    outValue = vector ! (vector ! (instructionPointer + 1))
-    newOutputs = outValue:outputs
-    nextPointer = instructionPointer + 2
-    nextOpCode = vector ! nextPointer
-    nextVector = vector
-
-processInstruction (IntCodeMemory 104 instructionPointer vector inputs outputs) = (IntCodeMemory nextOpCode nextPointer nextVector inputs newOutputs)
-  where
-    outValue = vector ! (instructionPointer + 1)
-    newOutputs = outValue:outputs
-    nextPointer = instructionPointer + 2
-    nextOpCode = vector ! nextPointer
-    nextVector = vector
-
-processInstruction (IntCodeMemory 5 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inValue = vector ! (vector ! (instructionPointer + 1))
-    outValue = vector ! (instructionPointer + 2)
-    nextPointer = if inValue /= 0 then outValue else instructionPointer + 3
-    nextOpCode = vector ! nextPointer
-    nextVector = vector
-
-processInstruction (IntCodeMemory 105 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inValue = vector ! (instructionPointer + 1)
-    outValue = vector ! (vector ! (instructionPointer + 2))
-    nextPointer = if inValue /= 0 then outValue else instructionPointer + 3
-    nextOpCode = vector ! nextPointer
-    nextVector = vector
-
-processInstruction (IntCodeMemory 1005 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inValue = vector ! (vector ! (instructionPointer + 1))
-    outValue = vector ! (instructionPointer + 2)
-    nextPointer = if inValue /= 0 then outValue else instructionPointer + 3
-    nextOpCode = vector ! nextPointer
-    nextVector = vector
-
-processInstruction (IntCodeMemory 1105 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inValue = vector ! (instructionPointer + 1)
-    outValue = vector ! (instructionPointer + 2)
-    nextPointer = if inValue /= 0 then outValue else instructionPointer + 3
-    nextOpCode = vector ! nextPointer
-    nextVector = vector
-
-processInstruction (IntCodeMemory 6 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inValue = vector ! (vector ! (instructionPointer + 1))
-    outValue = vector ! (vector ! (instructionPointer + 2))
-    nextPointer = if inValue == 0 then outValue else instructionPointer + 3
-    nextOpCode = vector ! nextPointer
-    nextVector = vector
-
-processInstruction (IntCodeMemory 106 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inValue = vector ! (instructionPointer + 1)
-    outValue = vector ! (vector ! (instructionPointer + 2))
-    nextPointer = if inValue == 0 then outValue else instructionPointer + 3
-    nextOpCode = vector ! nextPointer
-    nextVector = vector
-
-processInstruction (IntCodeMemory 1006 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inValue = vector ! (vector ! (instructionPointer + 1))
-    outValue = vector ! (instructionPointer + 2)
-    nextPointer = if inValue == 0 then outValue else instructionPointer + 3
-    nextOpCode = vector ! nextPointer
-    nextVector = vector
-
-processInstruction (IntCodeMemory 1106 instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory nextOpCode nextPointer nextVector inputs outputs)
-  where
-    inValue = vector ! (instructionPointer + 1)
-    outValue = vector ! (instructionPointer + 2)
-    nextPointer = if inValue == 0 then outValue else instructionPointer + 3
-    nextOpCode = vector ! nextPointer
-    nextVector = vector
-
-processInstruction (IntCodeMemory n instructionPointer vector inputs outputs) = processInstruction (IntCodeMemory (vector ! instructionPointer) instructionPointer vector inputs outputs)
+    opcodeInt = (vector memory) ! instructionPointer memory
+    --operation = traceShow (parseOperation opcodeInt) (parseOperation opcodeInt)
+    operation = parseOperation opcodeInt
+    newMemory = perform operation memory
+    continue = case operation of
+                 (Operation Output _) -> False
+                 (Operation Halt _) -> False
+                 other -> True
 
 execute :: IntCodeMemory -> IntCodeMemory
 execute memory = processInstruction memory
 
 initMemory :: Vector Int -> IntCodeMemory
 initMemory vector = IntCodeMemory 
-  { opCode = opCode
-  , instructionPointer = instructionPointer
+  { instructionPointer = 0
+  , relativeBase = 0
   , vector = vector
   , inputs = []
   , outputs = []
   }
-  where
-    instructionPointer = 0
-    opCode = vector ! instructionPointer
 
 programVector :: String -> Vector Int
 programVector = fromList . map parseInt . splitOn ","
