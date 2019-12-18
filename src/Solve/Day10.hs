@@ -3,7 +3,6 @@ module Solve.Day10 where
 import Data.List.Split (splitOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
 import Data.List
 import Control.Arrow
 import Helpers

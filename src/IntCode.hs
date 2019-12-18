@@ -236,13 +236,14 @@ perform (Operation Halt _) memory = memory
   }
 
 processInstruction :: IntCodeMemory -> IntCodeMemory
+processInstruction memory@(IntCodeMemory { instructionPointer = -1}) = memory 
 processInstruction memory = if continue then processInstruction newMemory else newMemory 
   where
     opcodeInt = (vector memory) ! instructionPointer memory
     operation = parseOperation opcodeInt
     newMemory = perform operation memory
     continue = case operation of
-                 (Operation Output _) -> True
+                 (Operation Output _) -> False
                  (Operation Halt _) -> False
                  _ -> True
 
