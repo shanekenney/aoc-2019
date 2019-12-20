@@ -19,7 +19,8 @@ library
                        Solve.Day08,
                        Solve.Day09,
                        Solve.Day10,
-                       Solve.Day11
+                       Solve.Day11,
+                       Solve.Day12
 
   other-modules:       IntCode,
                        Helpers
@@ -28,9 +29,12 @@ library
                        containers,
                        vector,
                        split,
-                       tuple
+                       tuple,
+                       parsec
 
   hs-source-dirs:      src
   default-language:    Haskell2010
 
   ghc-options:         -Wall
+
+  default-extensions:  NamedFieldPuns

@@ -132,8 +132,8 @@ partOne inputStr = Map.size $ paintHull robot memory plane
     plane = Map.empty
     memory = initMemory $ programVector $ inputStr
 
-partTwo :: String -> String
-partTwo inputStr = displayRegistration painted
+partTwo :: String -> IO ()
+partTwo inputStr = putStrLn $ displayRegistration painted
   where
     robot = initRobot
     plane = Map.singleton (0,0) White
