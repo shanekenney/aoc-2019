@@ -1,4 +1,4 @@
-module IntCode (execute, programVector, IntCodeMemory(..), initMemory) where
+module IntCode (execute, programVector, IntCodeMemory(..), initMemory, halted) where
 
 import Data.Vector (Vector, fromList, (!), (//))
 import qualified Data.Vector as V ((++), replicate)
@@ -233,6 +233,7 @@ perform (Operation AdjustRelativeBase paramMode') memory =
 perform (Operation Halt _) memory = memory
   { instructionPointer = -1
   , inputs = []
+  , outputs = []
   }
 
 processInstruction :: IntCodeMemory -> IntCodeMemory
@@ -261,4 +262,8 @@ initMemory vec = IntCodeMemory
 
 programVector :: String -> Vector Int
 programVector = fromList . map parseInt . splitOn ","
+
+halted :: IntCodeMemory -> Bool
+halted IntCodeMemory{ instructionPointer = -1 } = True
+halted _ = False
 
