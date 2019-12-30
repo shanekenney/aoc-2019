@@ -233,7 +233,6 @@ perform (Operation AdjustRelativeBase paramMode') memory =
 perform (Operation Halt _) memory = memory
   { instructionPointer = -1
   , inputs = []
-  , outputs = []
   }
 
 processInstruction :: IntCodeMemory -> IntCodeMemory

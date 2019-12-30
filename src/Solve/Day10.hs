@@ -1,6 +1,5 @@
 module Solve.Day10 where
 
-import Data.List.Split (splitOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.List
@@ -19,8 +18,6 @@ partOne = parseInput
   >>> getClosestDistance
   >>> countVisible
   >>> findMax
-
-type Coordinate = (Int, Int)
 
 partTwo :: String -> (Double, Coordinate)
 partTwo inputStr = 

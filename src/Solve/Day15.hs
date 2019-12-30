@@ -6,8 +6,6 @@ import IntCode
 import Data.List (delete, intercalate)
 import Helpers
 
-type Coordinate = (Int, Int)
-
 data Tile
   = Wall
   | Empty
@@ -21,13 +19,6 @@ tileToChar Goal = 'o'
 
 type Plane = Map Coordinate Tile
 
-data MovementCommand
-  = North
-  | South
-  | West
-  | East
-  deriving (Show, Eq)
-
 data MovementStatus
   = WallNoChange
   | Moved
@@ -39,20 +30,20 @@ data RepairDroid = RepairDroid
   , position :: Coordinate
   } deriving (Show)
 
-movementCommand :: Int -> MovementCommand
+movementCommand :: Int -> Direction
 movementCommand 1 = North
 movementCommand 2 = South
 movementCommand 3 = West
 movementCommand 4 = East
 movementCommand n = error $ show n ++ " is not a valid movement command."
 
-movementCommandToInt :: MovementCommand -> Int
+movementCommandToInt :: Direction -> Int
 movementCommandToInt North = 1
 movementCommandToInt South = 2
 movementCommandToInt West = 3
 movementCommandToInt East = 4
 
-opposite :: MovementCommand -> MovementCommand
+opposite :: Direction -> Direction
 opposite North = South
 opposite South = North
 opposite East = West
@@ -64,22 +55,22 @@ movementStatus 1 = Moved
 movementStatus 2 = MovedAndAtGoal
 movementStatus n = error $ show n ++ " is not a valid movement status."
 
-getCoordinate :: MovementCommand -> Coordinate -> Coordinate
+getCoordinate :: Direction -> Coordinate -> Coordinate
 getCoordinate North (x, y) = (x, y + 1)
 getCoordinate South (x, y) = (x, y - 1)
 getCoordinate East (x, y) = (x + 1, y)
 getCoordinate West (x, y) = (x - 1, y)
 
-nextPosition :: MovementCommand -> MovementStatus -> Coordinate -> Coordinate
+nextPosition :: Direction -> MovementStatus -> Coordinate -> Coordinate
 nextPosition _ WallNoChange coordinate = coordinate
 nextPosition command _ coordinate = getCoordinate command coordinate
 
-possibleMoves :: Plane -> Coordinate -> [MovementCommand]
+possibleMoves :: Plane -> Coordinate -> [Direction]
 possibleMoves plane position = filter unexplored [North, South, East, West]
   where 
     unexplored move' = Map.notMember (getCoordinate move' position) plane
 
-executeCommand :: MovementCommand -> RepairDroid -> Plane -> (MovementStatus, RepairDroid, Plane)
+executeCommand :: Direction -> RepairDroid -> Plane -> (MovementStatus, RepairDroid, Plane)
 executeCommand move droid@(RepairDroid { memory, position }) plane =
   let memoryMoveStatus = execute $ memory { inputs = [movementCommandToInt move] }
       moveStatus = movementStatus $ head $ outputs memoryMoveStatus
